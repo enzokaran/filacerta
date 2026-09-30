@@ -46,7 +46,12 @@ input,select{font:inherit;width:100%;padding:16px;border-radius:14px;border:2px 
 /* ====== CONFIGURAÇÃO (a anon key é pública por design; a segurança está no RLS) ====== */
 const SUPABASE_URL='https://oxplcedaqlklsjtogdxq.supabase.co';
 const SUPABASE_KEY='sb_publishable_cgtOhskxtRqSArnGuFjeAw_tcZzt-Xi';
-const QUEUE='A';
+let QUEUE='A';
+const QUEUES={
+ A:{name:'Consultório 1',who:'Dentista Enzo',room:'Consultório 1'},
+ B:{name:'Consultório 2',who:'Karen · apenas consulta',room:'Consultório 2'}
+};
+const EMAIL_QUEUE={'karensimeia05@gmail.com':'B'}; /* só organiza a tela; a proteção real é o RLS no banco */
 /* ================================================================================== */
 const sb=supabase.createClient(SUPABASE_URL,SUPABASE_KEY);
 const $=s=>document.querySelector(s),app=$('#app');
@@ -78,17 +83,17 @@ function patient(){
  }
  function draw(){
   let h=`<div class="wrap">${brand()}`;
-  if(!st)h+=`<div class="card"><h1>Bem-vindo</h1><p>Retire sua senha para entrar na fila.</p><br><button class="btn" id="take">RETIRAR SENHA</button><p class="msg">${esc(err)}</p></div>`;
+  if(!st)h+=`<div class="card"><h1>Bem-vindo</h1><p>Com quem você vai ser atendido?</p><br><div style="display:grid;gap:12px">${Object.entries(QUEUES).map(([k,v])=>`<button class="btn pick" data-q="${k}" style="text-align:left"><span style="display:block">${esc(v.name)}</span><span style="display:block;font-weight:500;font-size:.95rem;opacity:.9">${esc(v.who)}</span></button>`).join('')}</div><p class="msg">${esc(err)}</p></div>`;
   else{
    if(st.t_status==='CHAMADA'||st.t_status==='EM_ATENDIMENTO')h+=`<div class="card called"><div class="label">Sua senha foi chamada</div><h1>Dirija-se ao ${esc(st.t_room)}.</h1></div>`;
-   h+=`<div class="card"><div class="label">Sua senha</div><div class="big">${esc(st.t_code)}</div><br><span class="pill">${ST[st.t_status]}</span></div>`;
+   h+=`<div class="card"><div class="label">Sua senha</div><div class="big">${esc(st.t_code)}</div><p>${(q=>q?esc(q.name+' · '+q.who):'')(QUEUES[localStorage.getItem('ticketQ')||String(st.t_code||'A')[0]])}</p><br><span class="pill">${ST[st.t_status]}</span></div>`;
    if(st.t_status==='AGUARDANDO')h+=`<div class="card"><div class="label">Pessoas à sua frente</div><div class="big" style="font-size:3.5rem">${st.ahead}</div><p>Não feche esta página. Você será chamado pelo painel.</p></div>`;
    if(st.t_status==='PULADA')h+=`<div class="card"><p>Sua senha foi pulada. Procure a recepção.</p></div>`;
    if(st.t_status==='ATENDIDA'||st.t_status==='PULADA')h+=`<button class="btn sec" id="new">Retirar nova senha</button>`;
    h+=`<p style="text-align:center">Acompanhando em tempo real ●</p>`;
   }
   app.innerHTML=h+'</div>';
-  const b=$('#take');if(b)b.onclick=async()=>{b.disabled=true;err='';const{data,error}=await sb.rpc('take_ticket',{p_queue:QUEUE});if(error||!data||!data[0])err='Não foi possível retirar a senha. Tente novamente.';else localStorage.setItem('ticketId',data[0].ticket_id);load()};
+  document.querySelectorAll('.pick').forEach(b=>b.onclick=async()=>{document.querySelectorAll('.pick').forEach(x=>x.disabled=true);err='';const{data,error}=await sb.rpc('take_ticket',{p_queue:b.dataset.q});if(error||!data||!data[0])err='Não foi possível retirar a senha. Tente novamente.';else{localStorage.setItem('ticketId',data[0].ticket_id);localStorage.setItem('ticketQ',b.dataset.q)}load()});
   const n=$('#new');if(n)n.onclick=()=>{localStorage.removeItem('ticketId');st=null;prev=null;draw()};
  }
  listen('display_state',load);timers.push(setInterval(load,8000));load();
@@ -96,6 +101,7 @@ function patient(){
 
 /* ---------- TV ---------- */
 function tv(){
+ QUEUE=new URLSearchParams(location.search).get('fila')==='B'?'B':'A';
  let d={},hist=[],lastN=null,first=true,snd=false;
  async function load(){
   const a=await sb.from('display_state').select('*').eq('queue_id',QUEUE).single();d=a.data||{};
@@ -105,7 +111,7 @@ function tv(){
   draw(fresh);if(fresh&&snd)announce(d);
  }
  function draw(fresh){
-  app.innerHTML=`<div class="tv"><div class="main"><div class="lab">SENHA ATUAL</div><div class="code ${fresh?'flash':''}">${esc(d.code||'—')}</div>
+  app.innerHTML=`<div class="tv"><div class="main"><div class="room" style="font-size:3vw;color:#fff;opacity:.85">${esc(QUEUES[QUEUE].name+' · '+QUEUES[QUEUE].who)}</div><div class="lab">SENHA ATUAL</div><div class="code ${fresh?'flash':''}">${esc(d.code||'—')}</div>
   <div class="lab" style="font-size:2.2vw">${d.room_name?'DIRIJA-SE AO':''}</div><div class="room">${esc(d.room_name||'Aguardando chamada')}</div>
   ${snd?'':'<button class="btn warn" id="snd" style="width:auto;margin-top:3vw">Ativar som e voz</button>'}</div>
   <div class="side"><div class="box hist"><div class="lab" style="font-size:1.8vw">ÚLTIMAS CHAMADAS</div>${hist.map(t=>`<div>${esc(t.r_code)} — ${esc(t.r_room)}</div>`).join('')||'<div>—</div>'}</div>
@@ -129,10 +135,12 @@ function login(msg=''){
 /* ---------- Admin ---------- */
 async function admin(){
  const{data:{session}}=await sb.auth.getSession();if(!session)return go('/login');
- const{data:prof}=await sb.from('profiles').select('role,active').eq('id',session.user.id).maybeSingle();
+ const{data:prof}=await sb.from('profiles').select('*').eq('id',session.user.id).maybeSingle();
  if(!prof||!prof.active){await sb.auth.signOut();return login('Sua conta não tem permissão de equipe.')}
- const{data:rooms}=await sb.from('rooms').select('name').order('sort');
- let room=rooms&&rooms[0]?rooms[0].name:'',confirm=false,d={},T=[];
+ QUEUE=prof.queue_id||EMAIL_QUEUE[(session.user.email||'').toLowerCase()]||'A';
+ let rooms=(await sb.from('rooms').select('name').order('sort')).data||[];
+ if(QUEUE==='B')rooms=[{name:QUEUES.B.room}];
+ let room=rooms[0]?rooms[0].name:'',confirm=false,d={},T=[];
  const run=async(fn,args)=>{const{error}=await sb.rpc(fn,args);if(error)alert('Erro: '+error.message);load()};
  async function load(){
   const[a,q]=await Promise.all([sb.from('display_state').select('*').eq('queue_id',QUEUE).single(),sb.from('queues').select('session').eq('id',QUEUE).single()]);
@@ -141,7 +149,7 @@ async function admin(){
  function draw(){
   const w=T.filter(t=>t.status==='AGUARDANDO'),cur=T.find(t=>t.code===d.code&&['CHAMADA','EM_ATENDIMENTO'].includes(t.status)),nxt=w[0];
   const done=T.filter(t=>t.status==='ATENDIDA').length,hist=T.filter(t=>t.called_at).sort((a,b)=>b.called_at.localeCompare(a.called_at)).slice(0,8);
-  app.innerHTML=`<div class="wrap wide">${brand('Painel')}<p>${esc(session.user.email)} · ${esc(prof.role)} · <a href="#" id="out">Sair</a></p>
+  app.innerHTML=`<div class="wrap wide">${brand('Painel '+QUEUES[QUEUE].name+' · '+QUEUES[QUEUE].who)}<p>${esc(session.user.email)} · ${esc(prof.role)} · <a href="#" id="out">Sair</a></p>
   <div class="grid"><div class="card stat"><div class="label">Senha atual</div><div class="n">${esc(d.code||'—')}</div><p>${esc(d.room_name||'')}</p></div>
   <div class="card stat"><div class="label">Próxima</div><div class="n">${nxt?nxt.code:'—'}</div></div>
   <div class="card stat"><div class="label">Aguardando</div><div class="n">${w.length}</div></div>
@@ -153,7 +161,7 @@ async function admin(){
   <div class="card" style="text-align:left"><div class="label">Histórico de chamadas</div>${hist.map(t=>`<div class="row"><b>${esc(t.code)}</b><span>${esc(t.room_name)}</span><span>${ST[t.status]}</span><span>${new Date(t.called_at).toLocaleTimeString('pt-BR')}</span></div>`).join('')||'<p>Sem chamadas.</p>'}</div>
   <div class="card"><label><input type="checkbox" id="voz" style="width:auto" ${d.voice_enabled?'checked':''}> Chamada por voz na TV</label><br><br>
   ${confirm?`<p><b>Tem certeza que deseja encerrar a fila atual?</b> Pendentes serão fechados e a numeração volta a A001 (o histórico é mantido).</p><div class="grid"><button class="btn bad" id="yes">SIM, ENCERRAR DIA</button><button class="btn sec" id="no">Cancelar</button></div>`:'<button class="btn bad" id="day">ENCERRAR DIA</button>'}
-  <p style="margin-top:14px"><a href="/tv" target="_blank">Abrir painel da TV</a> · <a href="/patient" target="_blank">Página do paciente</a></p></div></div>`;
+  <p style="margin-top:14px"><a href="/tv?fila=${QUEUE}" target="_blank">Abrir painel da TV</a> · <a href="/patient" target="_blank">Página do paciente</a></p></div></div>`;
   const on=(id,f)=>{const e=$('#'+id);if(e)e.onclick=f};
   $('#room').onchange=e=>room=e.target.value;
   on('next',()=>run('call_next',{p_queue:QUEUE,p_room:room}));on('re',()=>run('recall',{p_queue:QUEUE}));
