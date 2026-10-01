@@ -32,6 +32,7 @@ input,select{font:inherit;width:100%;padding:16px;border-radius:14px;border:2px 
 .tv{min-height:100vh;display:grid;grid-template-columns:2fr 1fr;gap:3vw;padding:4vw;background:linear-gradient(135deg,#062a2e,#0b4d52);color:#fff}
 .tv .main{display:flex;flex-direction:column;justify-content:center;align-items:center;text-align:center}
 .tv .lab{font-size:3vw;letter-spacing:.3em;opacity:.8}.tv .code{font-size:26vw;font-weight:800;line-height:1;margin:.05em 0}
+.tv .pname{font-size:6vw;font-weight:700;margin:.1em 0 .3em}
 .tv .room{font-size:5vw;font-weight:700;color:#ffb98f;text-transform:uppercase}
 .tv .side{display:flex;flex-direction:column;gap:2.5vw;justify-content:center}
 .tv .box{background:rgba(255,255,255,.09);border-radius:2vw;padding:2vw}
@@ -39,7 +40,7 @@ input,select{font:inherit;width:100%;padding:16px;border-radius:14px;border:2px 
 .tv .qr{display:flex;flex-direction:column;align-items:center;gap:1vw;font-size:2vw;text-align:center}
 .tv .qr div{background:#fff;padding:1.2vw;border-radius:1.5vw}
 .flash{animation:pop 1.2s ease}@keyframes pop{0%{transform:scale(.6);opacity:0}40%{transform:scale(1.12);opacity:1;color:#ffd166}100%{transform:scale(1)}}
-@media (max-width:800px){.tv{grid-template-columns:1fr}.tv .lab{font-size:6vw}.tv .room{font-size:8vw}.tv .hist div{font-size:5vw}.tv .qr{font-size:4vw}}
+@media (max-width:800px){.tv{grid-template-columns:1fr}.tv .lab{font-size:6vw}.tv .room{font-size:8vw}.tv .pname{font-size:10vw}.tv .hist div{font-size:5vw}.tv .qr{font-size:4vw}}
 </style></head>
 <body><div id="app"></div>
 <script>
@@ -67,7 +68,7 @@ const brand=t=>`<div class="brand"><span class="dot"></span>FilaCerta${t?' — '
 /* ---------- Som e voz (TV) ---------- */
 function announce(d){
  try{const a=new (window.AudioContext||window.webkitAudioContext)();[880,1175].forEach((f,i)=>{const o=a.createOscillator(),g=a.createGain(),t=a.currentTime+i*.35;o.frequency.value=f;o.connect(g);g.connect(a.destination);g.gain.setValueAtTime(.3,t);g.gain.exponentialRampToValueAtTime(.001,t+.6);o.start(t);o.stop(t+.65)})}catch(e){}
- if(d.voice_enabled&&'speechSynthesis' in window&&d.code){setTimeout(()=>{const u=new SpeechSynthesisUtterance(`Senha ${d.code[0]} ${Number(d.code.slice(1))}, dirigir-se ao ${d.room_name}.`);u.lang='pt-BR';speechSynthesis.cancel();speechSynthesis.speak(u)},900)}
+ if(d.voice_enabled&&'speechSynthesis' in window&&d.code){setTimeout(()=>{const u=new SpeechSynthesisUtterance(`${d.patient_name?d.patient_name+'. ':''}Senha ${d.code[0]} ${Number(d.code.slice(1))}, dirija-se ao ${d.room_name}.`);u.lang='pt-BR';speechSynthesis.cancel();speechSynthesis.speak(u)},900)}
 }
 
 /* ---------- Paciente ---------- */
@@ -153,7 +154,7 @@ function tv(){
   draw(fresh);if(fresh&&snd)announce(d);
  }
  function draw(fresh){
-  app.innerHTML=`<div class="tv"><div class="main"><div class="room" style="font-size:3vw;color:#fff;opacity:.85">${esc(QUEUES[QUEUE].name+' · '+QUEUES[QUEUE].who)}</div><div class="lab">SENHA ATUAL</div><div class="code ${fresh?'flash':''}">${esc(d.code||'—')}</div>
+  app.innerHTML=`<div class="tv"><div class="main"><div class="room" style="font-size:3vw;color:#fff;opacity:.85">${esc(QUEUES[QUEUE].name+' · '+QUEUES[QUEUE].who)}</div><div class="lab">SENHA ATUAL</div><div class="code ${fresh?'flash':''}">${esc(d.code||'—')}</div>${d.patient_name&&d.code?`<div class="pname ${fresh?'flash':''}">${esc(d.patient_name)}</div>`:''}
   <div class="lab" style="font-size:2.2vw">${d.room_name?'DIRIJA-SE AO':''}</div><div class="room">${esc(d.room_name||'Aguardando chamada')}</div>
   ${snd?'':'<button class="btn warn" id="snd" style="width:auto;margin-top:3vw">Ativar som e voz</button>'}</div>
   <div class="side"><div class="box hist"><div class="lab" style="font-size:1.8vw">ÚLTIMAS CHAMADAS</div>${hist.map(t=>`<div>${esc(t.r_code)} — ${esc(t.r_room)}</div>`).join('')||'<div>—</div>'}</div>
