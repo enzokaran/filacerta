@@ -160,18 +160,24 @@ function patient(){
 
 /* ---------- TV ---------- */
 function tv(){
- QUEUE=new URLSearchParams(location.search).get('fila')==='B'?'B':'A';
- let d={},hist=[],lastN=null,first=true,snd=false;
+ const qp=new URLSearchParams(location.search).get('fila'),only=['A','B'].includes(qp)?qp:null; /* /tv = todos os consultórios; /tv?fila=B = só um */
+ let d={},rows=[],hist=[],lastN={},first=true,snd=false;
+ const iso=o=>Object.values(o).find(v=>typeof v==='string'&&/^\d{4}-\d{2}-\d{2}T/.test(v));
+ const merge=ls=>{if(ls.length===1)return ls[0];const all=ls.flat();if(all.length&&all.every(iso))return all.sort((a,b)=>iso(b).localeCompare(iso(a))).slice(0,4);const out=[];for(let i=0;i<4;i++)ls.forEach(l=>l[i]&&out.push(l[i]));return out.slice(0,4)};
  async function load(){
-  const a=await sb.from('display_state').select('*').eq('queue_id',QUEUE).single();d=a.data||{};
-  const h=await sb.rpc('recent_calls',{p_queue:QUEUE,p_limit:4});hist=h.data||[];
-  const fresh=!first&&d.call_nonce&&d.call_nonce!==lastN;
-  if(d.call_nonce)lastN=d.call_nonce;first=false;
-  draw(fresh);if(fresh&&snd)announce(d);
+  const qs=only?[only]:Object.keys(QUEUES);
+  const a=await sb.from('display_state').select('*').in('queue_id',qs);rows=a.data||[];
+  const hs=await Promise.all(qs.map(q=>sb.rpc('recent_calls',{p_queue:q,p_limit:4})));hist=merge(hs.map(h=>h.data||[]));
+  const shown=rows.filter(r=>r.code&&r.call_nonce).sort((x,y)=>y.call_nonce-x.call_nonce);
+  d=shown[0]||rows[0]||{};
+  const fr=first?[]:rows.filter(r=>r.code&&r.call_nonce&&r.call_nonce!==lastN[r.queue_id]).sort((x,y)=>x.call_nonce-y.call_nonce);
+  rows.forEach(r=>{if(r.call_nonce)lastN[r.queue_id]=r.call_nonce});first=false;
+  draw(fr.length>0);
+  if(snd)fr.forEach((r,i)=>setTimeout(()=>announce(r),i*7000));
  }
- const voiceInfo=()=>{if(!('speechSynthesis' in window))return 'Voz: este navegador não suporta voz';const v=speechSynthesis.getVoices();return 'Voz: '+(d.voice_enabled?'ligada no painel':'DESLIGADA no painel desta fila')+' · '+(v.find(x=>/^pt/i.test(x.lang))?'voz em português encontrada':(v.length?'SEM voz em português neste aparelho':'carregando vozes...'))};
+ const voiceInfo=()=>{if(!('speechSynthesis' in window))return 'Voz: este navegador não suporta voz';const v=speechSynthesis.getVoices();return 'Voz: '+(rows.map(r=>r.queue_id+' '+(r.voice_enabled?'ligada':'DESLIGADA')).join(' · ')||'?')+' · '+(v.find(x=>/^pt/i.test(x.lang))?'voz em português encontrada':(v.length?'SEM voz em português neste aparelho':'carregando vozes...'))};
  function draw(fresh){
-  app.innerHTML=`<div class="tv"><div class="main"><div class="room" style="font-size:3vw;color:#fff;opacity:.85">${esc(QUEUES[QUEUE].name+' · '+QUEUES[QUEUE].who)}</div><div class="lab">SENHA ATUAL</div><div class="code ${fresh?'flash':''}">${esc(d.code||'—')}</div>${d.patient_name&&d.code?`<div class="pname ${fresh?'flash':''}">${esc(d.patient_name)}</div>`:''}
+  app.innerHTML=`<div class="tv"><div class="main"><div class="room" style="font-size:3vw;color:#fff;opacity:.85">${only?esc(QUEUES[only].name+' · '+QUEUES[only].who):''}</div><div class="lab">SENHA ATUAL</div><div class="code ${fresh?'flash':''}">${esc(d.code||'—')}</div>${d.patient_name&&d.code?`<div class="pname ${fresh?'flash':''}">${esc(d.patient_name)}</div>`:''}
   <div class="lab sub">${d.room_name?'DIRIJA-SE AO':''}</div><div class="room">${esc(d.room_name||'Aguardando chamada')}</div>
   ${snd?`<div style="margin-top:2vh;font-size:2vh;opacity:.55">${voiceInfo()} · <a href="#" id="tst" style="color:#ffb98f">Testar voz</a></div>`:'<button class="btn warn" id="snd" style="width:auto;margin-top:3vw">Ativar som e voz</button>'}</div>
   <div class="side"><div class="box hist"><div class="lab hl">ÚLTIMAS CHAMADAS</div>${hist.map(t=>`<div>${esc(t.r_code)} — ${esc(t.r_room)}</div>`).join('')||'<div>—</div>'}</div>
@@ -222,7 +228,7 @@ async function admin(){
   <div class="card" style="text-align:left"><div class="label">Histórico de chamadas</div>${hist.map(t=>`<div class="row"><b>${esc(t.code)}</b><span>${esc(t.room_name)}</span><span>${ST[t.status]}</span><span>${new Date(t.called_at).toLocaleTimeString('pt-BR')}</span></div>`).join('')||'<p>Sem chamadas.</p>'}</div>
   <div class="card"><label><input type="checkbox" id="voz" style="width:auto" ${d.voice_enabled?'checked':''}> Chamada por voz na TV</label><br><br>
   ${confirm?`<p><b>Tem certeza que deseja encerrar a fila atual?</b> Pendentes serão fechados e a numeração volta a A001 (o histórico é mantido).</p><div class="grid"><button class="btn bad" id="yes">SIM, ENCERRAR DIA</button><button class="btn sec" id="no">Cancelar</button></div>`:'<button class="btn bad" id="day">ENCERRAR DIA</button>'}
-  <p style="margin-top:14px"><a href="/tv?fila=${QUEUE}" target="_blank">Abrir painel da TV</a> · <a href="/patient" target="_blank">Página do paciente</a></p></div></div>`;
+  <p style="margin-top:14px"><a href="/tv" target="_blank">Abrir painel da TV</a> · <a href="/patient" target="_blank">Página do paciente</a></p></div></div>`;
   const on=(id,f)=>{const e=$('#'+id);if(e)e.onclick=f};
   $('#room').onchange=e=>room=e.target.value;
   on('next',()=>run('call_next',{p_queue:QUEUE,p_room:room}));on('re',()=>run('recall',{p_queue:QUEUE}));
