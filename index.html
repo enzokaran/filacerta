@@ -72,10 +72,52 @@ function announce(d){
 
 /* ---------- Paciente ---------- */
 function patient(){
- let st=null,prev=null,err='';
+ let st=null,prev=null,err='',step='queue',qk=null,mode=null,F={},types=[],busy=false;
+ const digits=s=>String(s||'').replace(/\D/g,'');
+ const cpfOk=c=>{if(!/^\d{11}$/.test(c)||/^(\d)\1+$/.test(c))return false;for(const n of[9,10]){let t=0;for(let i=0;i<n;i++)t+=c[i]*(n+1-i);if((t*10%11)%10!=c[n])return false}return true};
+ const inp=(id,ph,type,v,x)=>`<input id="${id}" type="${type}" placeholder="${ph}" value="${esc(v||'')}" ${x||''}>`;
+ const btn=(id,t,c)=>`<button class="btn ${c||''}" id="${id}">${t}</button>`;
+ const lab=t=>`<p style="text-align:left;margin:10px 0 0">${t}</p>`;
+ async function loadTypes(){const r=await sb.from('service_types').select('id,name').eq('active',true).order('sort');types=r.data||[]}
+ function flow(){
+  const E=`<p class="msg">${esc(err)}</p>`,V=`<a href="#" id="back" style="text-align:center;display:block;margin-top:14px">Voltar</a>`;
+  const who=qk?`<p>${esc(QUEUES[qk].name+' · '+QUEUES[qk].who)}</p>`:'';
+  if(step==='who')return `<div class="card"><h1>Bem-vindo</h1>${who}<br><div style="display:grid;gap:12px">${btn('old','JÁ TENHO CADASTRO')}${btn('newp','SOU NOVO PACIENTE','sec')}${btn('help','PRECISO DE AJUDA','sec')}</div>${E}${V}</div>`;
+  if(step==='help')return `<div class="card"><h1>Precisa de ajuda?</h1><p>Procure a recepção. Uma pessoa da equipe faz seu cadastro e gera sua senha.</p>${V}</div>`;
+  if(step==='login')return `<div class="card"><h1>Seu cadastro</h1>${who}${inp('cpf','CPF (somente números)','text',F.cpf,'inputmode="numeric" autocomplete="off"')}${lab('Data de nascimento')}${inp('bd','','date',F.bd)}<br>${btn('find','BUSCAR')}${E}${V}</div>`;
+  if(step==='found')return `<div class="card"><h1>Encontramos seu cadastro.</h1><p>Olá, ${esc(F.first)}!</p><br>${btn('go','CONTINUAR')}${V}</div>`;
+  if(step==='reg')return `<div class="card"><h1>Novo paciente</h1>${who}${inp('nm','Nome completo','text',F.name,'autocomplete="name"')}${inp('cpf','CPF (somente números)','text',F.cpf,'inputmode="numeric" autocomplete="off"')}${lab('Data de nascimento')}${inp('bd','','date',F.bd)}${inp('ph','Telefone com DDD','tel',F.phone,'autocomplete="tel"')}${inp('em','E-mail (opcional)','email',F.email,'autocomplete="email"')}<br>${btn('rgo','CONTINUAR')}${E}${V}</div>`;
+  if(step==='svc')return `<div class="card"><h1>Qual atendimento você precisa?</h1><br><div style="display:grid;gap:12px">${types.map(t=>`<button class="btn svc" data-id="${t.id}">${esc(t.name)}</button>`).join('')||'<p>Nenhum tipo disponível.</p>'}</div>${E}${V}</div>`;
+  return `<div class="card"><h1>Bem-vindo</h1><p>Com quem você vai ser atendido?</p><br><div style="display:grid;gap:12px">${Object.entries(QUEUES).map(([k,v])=>`<button class="btn pick" data-q="${k}" style="text-align:left"><span style="display:block">${esc(v.name)}</span><span style="display:block;font-weight:500;font-size:.95rem;opacity:.9">${esc(v.who)}</span></button>`).join('')}</div></div>`;
+ }
+ function bind(){
+  const on=(id,f)=>{const x=$('#'+id);if(x)x.onclick=f},to=async(s2)=>{err='';step=s2;if(s2==='svc')await loadTypes();draw()};
+  document.querySelectorAll('.pick').forEach(b=>b.onclick=()=>{qk=b.dataset.q;to('who')});
+  on('old',()=>{mode='old';to('login')});on('newp',()=>{mode='new';to('reg')});on('help',()=>to('help'));
+  on('back',e=>{e.preventDefault();to(step==='svc'?(mode==='old'?'found':'reg'):{who:'queue',login:'who',reg:'who',help:'who',found:'login'}[step]||'queue')});
+  on('find',async()=>{const c=digits($('#cpf').value),b=$('#bd').value;F={cpf:c,bd:b};
+   if(!cpfOk(c)||!b){err='Confira o CPF e a data de nascimento.';return draw()}
+   const{data,error}=await sb.rpc('find_patient',{p_cpf:c,p_birth:b});const r=data&&data[0];
+   if(error||!r){err='Não encontramos esse cadastro. Confira os dados ou escolha "Sou novo paciente".';return draw()}
+   F.first=r.first_name;to('found')});
+  on('go',()=>to('svc'));
+  on('rgo',()=>{const n=$('#nm').value.trim(),c=digits($('#cpf').value),b=$('#bd').value,ph=digits($('#ph').value),em=$('#em').value.trim();F={name:n,cpf:c,bd:b,phone:ph,email:em};
+   if(n.length<5||!n.includes(' '))err='Digite o nome completo.';
+   else if(!cpfOk(c))err='CPF inválido. Confira os números.';
+   else if(!b||b>new Date().toISOString().slice(0,10)||b<'1900-01-01')err='Data de nascimento inválida.';
+   else if(ph.length<10||ph.length>11)err='Telefone inválido. Use DDD + número.';
+   else if(em&&!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(em))err='E-mail inválido.';
+   else return to('svc');
+   draw()});
+  document.querySelectorAll('.svc').forEach(b=>b.onclick=async()=>{if(busy)return;busy=true;const sid=+b.dataset.id;
+   const{data,error}=mode==='old'?await sb.rpc('self_checkin',{p_queue:qk,p_service:sid,p_cpf:F.cpf,p_birth:F.bd}):await sb.rpc('register_and_checkin',{p_queue:qk,p_service:sid,p_name:F.name,p_cpf:F.cpf,p_birth:F.bd,p_phone:F.phone,p_email:F.email||null});
+   busy=false;
+   if(error||!data||!data[0]){if(/CPF_JA_CADASTRADO/.test(error&&error.message||'')){err='Este CPF já possui um cadastro. Tente acessar seu cadastro existente.';step='who'}else err='Não foi possível gerar a senha. Tente novamente.';return draw()}
+   localStorage.setItem('ticketId',data[0].ticket_id);localStorage.setItem('ticketQ',qk);F={};step='queue';load()});
+ }
  const tid=()=>localStorage.getItem('ticketId');
  async function load(){
-  if(!tid()){st=null;return draw()}
+  if(!tid()){st=null;if(step==='queue')draw();return}
   const{data}=await sb.rpc('ticket_status',{p_id:tid()});const r=data&&data[0];
   if(!r||r.expired){localStorage.removeItem('ticketId');st=null}else st=r;
   if(st&&prev&&prev!=='CHAMADA'&&st.t_status==='CHAMADA'&&navigator.vibrate)navigator.vibrate([300,150,300]);
@@ -83,7 +125,7 @@ function patient(){
  }
  function draw(){
   let h=`<div class="wrap">${brand()}`;
-  if(!st)h+=`<div class="card"><h1>Bem-vindo</h1><p>Com quem você vai ser atendido?</p><br><div style="display:grid;gap:12px">${Object.entries(QUEUES).map(([k,v])=>`<button class="btn pick" data-q="${k}" style="text-align:left"><span style="display:block">${esc(v.name)}</span><span style="display:block;font-weight:500;font-size:.95rem;opacity:.9">${esc(v.who)}</span></button>`).join('')}</div><p class="msg">${esc(err)}</p></div>`;
+  if(!st)h+=flow();
   else{
    if(st.t_status==='CHAMADA'||st.t_status==='EM_ATENDIMENTO')h+=`<div class="card called"><div class="label">Sua senha foi chamada</div><h1>Dirija-se ao ${esc(st.t_room)}.</h1></div>`;
    h+=`<div class="card"><div class="label">Sua senha</div><div class="big">${esc(st.t_code)}</div><p>${(q=>q?esc(q.name+' · '+q.who):'')(QUEUES[localStorage.getItem('ticketQ')||String(st.t_code||'A')[0]])}</p><br><span class="pill">${ST[st.t_status]}</span></div>`;
@@ -93,8 +135,8 @@ function patient(){
    h+=`<p style="text-align:center">Acompanhando em tempo real ●</p>`;
   }
   app.innerHTML=h+'</div>';
-  document.querySelectorAll('.pick').forEach(b=>b.onclick=async()=>{document.querySelectorAll('.pick').forEach(x=>x.disabled=true);err='';const{data,error}=await sb.rpc('take_ticket',{p_queue:b.dataset.q});if(error||!data||!data[0])err='Não foi possível retirar a senha. Tente novamente.';else{localStorage.setItem('ticketId',data[0].ticket_id);localStorage.setItem('ticketQ',b.dataset.q)}load()});
-  const n=$('#new');if(n)n.onclick=()=>{localStorage.removeItem('ticketId');st=null;prev=null;draw()};
+  bind();
+  const n=$('#new');if(n)n.onclick=()=>{localStorage.removeItem('ticketId');st=null;prev=null;step='queue';draw()};
  }
  listen('display_state',load);timers.push(setInterval(load,8000));load();
 }
